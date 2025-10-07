@@ -46,7 +46,7 @@ app.post('/api/extract', async (req, res) => {
     const command = `yt-dlp -J "${url}"`;
     const { stdout } = await execPromise(command, { 
       maxBuffer: 1024 * 1024 * 10,
-      timeout: 30000 
+      timeout: 100000 
     });
 
     const videoInfo = JSON.parse(stdout);
