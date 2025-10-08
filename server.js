@@ -15,6 +15,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
+
 const allowedOrigins = [
   'http://localhost:3000',
   'https://twittervideodownloader-gilt.vercel.app'
@@ -22,13 +23,9 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'https://twittervideodownloader-gilt.vercel.app'
-    ];
+    if (!origin) return callback(null, true); // allow Postman or server-to-server requests
     if (allowedOrigins.indexOf(origin) === -1) {
-      return callback(new Error('Not allowed by CORS'), false);
+      return callback(new Error('Not allowed by CORS'));
     }
     return callback(null, true);
   },
@@ -36,16 +33,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Answer preflight OPTIONS requests for any route
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.header('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || '*');
-    return res.sendStatus(200);
-  }
-  next();
-});
+// **Remove any app.options('*') or app.options('/*') lines**
 
 
 app.use(express.json());
