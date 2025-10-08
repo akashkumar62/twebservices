@@ -15,11 +15,38 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://twittervideodownloader-gilt.vercel.app'
+];
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'twittervideodownloader-gilt.vercel.app'],
-  methods: ['GET','POST','OPTIONS'],
-  credentials: true
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true);
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'https://twittervideodownloader-gilt.vercel.app'
+    ];
+    if (allowedOrigins.indexOf(origin) === -1) {
+      return callback(new Error('Not allowed by CORS'), false);
+    }
+    return callback(null, true);
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// Answer preflight OPTIONS requests for any route
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.header('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || '*');
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 
 app.use(express.json());
 
