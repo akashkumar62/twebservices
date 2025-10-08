@@ -14,8 +14,6 @@ const streamPipeline = promisify(pipeline);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
-
 const allowedOrigins = [
   'http://localhost:3000',
   'https://twittervideodownloader-gilt.vercel.app'
@@ -23,25 +21,28 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true); // allow Postman or server-to-server requests
-    if (allowedOrigins.indexOf(origin) === -1) {
-      return callback(new Error('Not allowed by CORS'));
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
     }
-    return callback(null, true);
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  preflightContinue: false,  // Let CORS middleware handle preflight
+  optionsSuccessStatus: 204   // Standard preflight response
 }));
-
-// **Remove any app.options('*') or app.options('/*') lines**
-
 
 app.use(express.json());
 
-// Rate limiting
+// Rate limiting (apply after CORS!)
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 40, // allow a bit more for extraction + streaming
+  windowMs: 15 * 60 * 1000,
+  max: 40,
   message: 'Too many requests, please try again later.'
 });
 app.use('/api/', limiter);
@@ -55,7 +56,7 @@ function isValidTwitterUrl(url) {
   return patterns.some(pattern => pattern.test(url));
 }
 
-// Helper to pick best formats (server returns list with http_headers when available)
+// Helper to pick best formats
 function normalizeFormats(formats) {
   if (!Array.isArray(formats)) return [];
   return formats.map(f => ({
@@ -75,8 +76,11 @@ function normalizeFormats(formats) {
 // Extract video info endpoint
 app.post('/api/extract', async (req, res) => {
   const { url } = req.body;
+  
   if (!url || !isValidTwitterUrl(url)) {
-    return res.status(400).json({ error: 'Invalid Twitter/X URL. Provide a valid tweet URL.' });
+    return res.status(400).json({ 
+      error: 'Invalid Twitter/X URL. Provide a valid tweet URL.' 
+    });
   }
 
   try {
@@ -88,7 +92,10 @@ app.post('/api/extract', async (req, res) => {
 
     if (!stdout) {
       console.error('yt-dlp produced no stdout, stderr:', stderr);
-      return res.status(500).json({ error: 'yt-dlp returned empty output', details: stderr });
+      return res.status(500).json({ 
+        error: 'yt-dlp returned empty output', 
+        details: stderr 
+      });
     }
 
     const videoInfo = JSON.parse(stdout);
@@ -96,19 +103,30 @@ app.post('/api/extract', async (req, res) => {
     const formats = normalizeFormats(formatsRaw);
 
     // Separate video-only and audio-only; also find combined (mp4) formats
-    const videoCombined = formats.filter(f => f.vcodec !== 'none' && f.acodec !== 'none');
-    const videoOnly = formats.filter(f => f.vcodec !== 'none' && (!f.acodec || f.acodec === 'none'));
-    const audioOnly = formats.filter(f => f.acodec !== 'none' && (f.vcodec === 'none' || !f.vcodec));
+    const videoCombined = formats.filter(f => 
+      f.vcodec !== 'none' && f.acodec !== 'none'
+    );
+    const videoOnly = formats.filter(f => 
+      f.vcodec !== 'none' && (!f.acodec || f.acodec === 'none')
+    );
+    const audioOnly = formats.filter(f => 
+      f.acodec !== 'none' && (f.vcodec === 'none' || !f.vcodec)
+    );
 
     // Sort by height (desc) when possible
-    const sortByHeightDesc = arr => arr.slice().sort((a, b) => (b.height || 0) - (a.height || 0));
+    const sortByHeightDesc = arr => arr.slice().sort((a, b) => 
+      (b.height || 0) - (a.height || 0)
+    );
 
-    // Prepare response formats (top items from combined, else videoOnly)
     const combinedSorted = sortByHeightDesc(videoCombined);
     const videoSorted = sortByHeightDesc(videoOnly);
 
-    // Choose a direct playable URL (prefer combined mp4, else video-only first)
-    const directPlayable = (combinedSorted[0] || videoSorted[0] || formats[0]) || null;
+    // Choose a direct playable URL
+    const directPlayable = (
+      combinedSorted[0] || 
+      videoSorted[0] || 
+      formats[0]
+    ) || null;
 
     const response = {
       id: videoInfo.id || videoInfo.display_id || null,
@@ -117,7 +135,6 @@ app.post('/api/extract', async (req, res) => {
       duration: videoInfo.duration || null,
       uploader: videoInfo.uploader || videoInfo.channel || null,
       formats: [
-        // Return combined MP4s first (best -> worst), then video-only HLS/mp4 formats
         ...combinedSorted.slice(0, 8),
         ...videoSorted.slice(0, 8),
         ...audioOnly.slice(0, 4)
@@ -138,7 +155,9 @@ app.post('/api/extract', async (req, res) => {
   } catch (error) {
     console.error('Extraction error:', error);
     if (error.killed) {
-      return res.status(408).json({ error: 'Request timeout. Please try again.' });
+      return res.status(408).json({ 
+        error: 'Request timeout. Please try again.' 
+      });
     }
     res.status(500).json({
       error: 'Failed to extract video. The tweet may be private, deleted, or require authentication.',
@@ -147,17 +166,20 @@ app.post('/api/extract', async (req, res) => {
   }
 });
 
-// Get direct download URL endpoint (returns chosen format.url)
+// Get direct download URL endpoint
 app.post('/api/download', async (req, res) => {
   const { url, quality } = req.body;
-  if (!url || !isValidTwitterUrl(url)) return res.status(400).json({ error: 'Invalid Twitter/X URL' });
+  
+  if (!url || !isValidTwitterUrl(url)) {
+    return res.status(400).json({ error: 'Invalid Twitter/X URL' });
+  }
 
   try {
-    // We'll use yt-dlp JSON and pick the matching format by height or best
     const { stdout } = await execPromise(`yt-dlp -J "${url}"`, {
       maxBuffer: 1024 * 1024 * 30,
       timeout: 120000
     });
+    
     const info = JSON.parse(stdout);
     const formats = normalizeFormats(info.formats || []);
 
@@ -166,26 +188,40 @@ app.post('/api/download', async (req, res) => {
       const maxH = Number(quality);
       // Try to find a combined format with height <= maxH first
       chosen = formats
-        .filter(f => f.height && f.height <= maxH && f.vcodec !== 'none' && f.acodec !== 'none')
+        .filter(f => 
+          f.height && 
+          f.height <= maxH && 
+          f.vcodec !== 'none' && 
+          f.acodec !== 'none'
+        )
         .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+      
       if (!chosen) {
         // fallback to video-only with height <= maxH
         chosen = formats
-          .filter(f => f.height && f.height <= maxH && f.vcodec !== 'none')
+          .filter(f => 
+            f.height && 
+            f.height <= maxH && 
+            f.vcodec !== 'none'
+          )
           .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
       }
     } else {
       // pick best combined or best video-only
       chosen = formats
         .filter(f => f.vcodec !== 'none' && f.acodec !== 'none')
-        .sort((a, b) => (b.height || 0) - (a.height || 0))[0] || formats.filter(f => f.vcodec !== 'none').sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+        .sort((a, b) => (b.height || 0) - (a.height || 0))[0] || 
+        formats
+          .filter(f => f.vcodec !== 'none')
+          .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
     }
 
     if (!chosen || !chosen.url) {
-      return res.status(500).json({ error: 'Could not find a download URL for that quality' });
+      return res.status(500).json({ 
+        error: 'Could not find a download URL for that quality' 
+      });
     }
 
-    // Return the URL and http_headers so client can optionally proxy it
     res.json({
       downloadUrl: chosen.url,
       protocol: chosen.protocol,
@@ -193,14 +229,20 @@ app.post('/api/download', async (req, res) => {
     });
   } catch (error) {
     console.error('Download error:', error);
-    res.status(500).json({ error: 'Failed to get download URL', details: (error && error.message) || error });
+    res.status(500).json({ 
+      error: 'Failed to get download URL', 
+      details: (error && error.message) || error 
+    });
   }
 });
 
-// Stream proxy endpoint — proxies remoteUrl, forwards Range, and sets headers from optional base64 param "h"
+// Stream proxy endpoint
 app.get('/api/stream', async (req, res) => {
   const { remoteUrl, h } = req.query;
-  if (!remoteUrl) return res.status(400).json({ error: 'remoteUrl required' });
+  
+  if (!remoteUrl) {
+    return res.status(400).json({ error: 'remoteUrl required' });
+  }
 
   // Parse optional base64-encoded headers JSON
   let extraHeaders = {};
@@ -213,53 +255,71 @@ app.get('/api/stream', async (req, res) => {
   }
 
   try {
-    const parsed = new URL(remoteUrl); // throws if invalid
+    const parsed = new URL(remoteUrl);
 
-    // Build forward headers: include Range if present, and merge extraHeaders (User-Agent etc.)
     const forward = {};
     if (req.headers.range) forward['range'] = req.headers.range;
     Object.assign(forward, extraHeaders);
 
     const upstream = await fetch(remoteUrl, {
       headers: forward,
-      // keep redirect handling default
     });
 
-    // Propagate status
     res.status(upstream.status);
 
-    // Copy selected headers
     upstream.headers.forEach((value, name) => {
-      const hopByHop = ['connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailers','transfer-encoding','upgrade'];
+      const hopByHop = [
+        'connection',
+        'keep-alive',
+        'proxy-authenticate',
+        'proxy-authorization',
+        'te',
+        'trailers',
+        'transfer-encoding',
+        'upgrade'
+      ];
       if (!hopByHop.includes(name.toLowerCase())) {
-        // Some headers are useful to the browser
         res.setHeader(name, value);
       }
     });
 
-    // Stream upstream body to client
     await streamPipeline(upstream.body, res);
   } catch (err) {
     console.error('Stream proxy error', err);
-    if (!res.headersSent) res.status(500).json({ error: 'stream failed', details: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        error: 'stream failed', 
+        details: err.message 
+      });
+    }
   }
 });
 
 // Health check
-app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'running' }));
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'running' });
+});
 
-// Check dependencies (quick check)
+// Check dependencies
 app.get('/api/check-dependencies', async (req, res) => {
   try {
     const { stdout: ytdlp } = await execPromise('which yt-dlp || true');
     const { stdout: version } = await execPromise('yt-dlp --version || true');
-    res.json({ yt_dlp_path: ytdlp.trim(), yt_dlp_version: version.trim() });
+    res.json({ 
+      yt_dlp_path: ytdlp.trim(), 
+      yt_dlp_version: version.trim() 
+    });
   } catch (e) {
-    res.status(500).json({ error: 'dependency check failed', details: e.message });
+    res.status(500).json({ 
+      error: 'dependency check failed', 
+      details: e.message 
+    });
   }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`📡 CORS enabled for: ${allowedOrigins.join(', ')}`);
 });
+
 module.exports = app;
