@@ -26,23 +26,8 @@ const PORT = process.env.PORT || 3001;
 //   credentials: true
 // }));
 
-const allowedOrigins = [
-  'https://twittervideodownloader-gilt.vercel.app',
-  'http://localhost:3000'
-];
-
 app.use(cors({
-  origin: function(origin, callback) {
-    // allow requests with no origin (like Postman)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = `The CORS policy for this site does not allow access from the specified Origin.`;
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  methods: ['GET','POST','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization']
+  origin: 'https://twittervideodownloader-gilt.vercel.app'
 }));
 
 
@@ -327,8 +312,7 @@ app.get('/api/check-dependencies', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📡 CORS enabled for: ${allowedOrigins.join(', ')}`);
+  console.log(`🚀 Server running on`);
 });
 
 module.exports = app;
