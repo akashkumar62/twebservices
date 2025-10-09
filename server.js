@@ -14,21 +14,59 @@ const streamPipeline = promisify(pipeline);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// const allowedOrigins = [
-//   'http://localhost:3000',
-//   'https://twittervideodownloader-gilt.vercel.app'
-// ];
+// ------------------- CORS configuration (replace existing allowedOrigins + cors middleware) -------------------
+const DEFAULT_ALLOWED = [
+  'http://localhost:3000',
+  'https://twittervideodownloader-gilt.vercel.app'
+];
 
-// app.use(cors({
-//   origin: allowedOrigins,
-//   methods: ['GET', 'POST', 'OPTIONS'],
-//   allowedHeaders: ['Content-Type', 'Authorization'],
-//   credentials: true
-// }));
+// Allow adding more origins via env (comma-separated)
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED.join(','))
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
-app.use(cors({
-  origin: 'https://twittervideodownloader-gilt.vercel.app'
-}));
+// Utility to check origin; allow requests with no origin (curl / server-side)
+function isOriginAllowed(origin) {
+  if (!origin) return true; // allow non-browser requests (curl, server-to-server)
+  // exact match OR allow subdomains of vercel/app if you want (example below)
+  if (allowedOrigins.includes(origin)) return true;
+  // optional: allow any vercel.app subdomain (uncomment if desired)
+  // if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
+  return false;
+}
+
+// CORS middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (isOriginAllowed(origin)) {
+    // If origin exists, echo it back (required when credentials true)
+    if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
+    else res.setHeader('Access-Control-Allow-Origin', '*'); // for non-browser clients
+
+    // Allow credentials if you actually use cookies/sessions from browser
+    // If you don't use cookies, you can set this to false or remove the header.
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    // Methods + headers
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+
+    // Expose streaming / range headers to browser so it can handle video streaming
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length, Content-Type');
+  } else {
+    // Not allowed origin -> no CORS headers (browser will block)
+    console.warn('Blocked CORS origin:', origin);
+  }
+
+  // handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+// ------------------- end CORS configuration -------------------
+
 
 
 app.use(express.json());
