@@ -1,6 +1,5 @@
 // server.js
 const express = require('express');
-const cors = require('cors');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const rateLimit = require('express-rate-limit');
@@ -14,7 +13,7 @@ const streamPipeline = promisify(pipeline);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ------------------- CORS configuration (replace existing allowedOrigins + cors middleware) -------------------
+// ------------------- CORS configuration -------------------
 const DEFAULT_ALLOWED = [
   'http://localhost:3000',
   'https://twittervideodownloader-gilt.vercel.app'
@@ -26,52 +25,53 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || DEFAULT_ALLOWED.join(',')
   .map(s => s.trim())
   .filter(Boolean);
 
-// Utility to check origin; allow requests with no origin (curl / server-side)
+// Utility to check origin; allow requests with no origin (curl / server-to-server)
 function isOriginAllowed(origin) {
   if (!origin) return true; // allow non-browser requests (curl, server-to-server)
-  // exact match OR allow subdomains of vercel/app if you want (example below)
   if (allowedOrigins.includes(origin)) return true;
-  // optional: allow any vercel.app subdomain (uncomment if desired)
+  // optional: allow vercel preview subdomains (uncomment if you want)
   // if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
   return false;
 }
 
-// CORS middleware
+// CORS middleware (manual so we can echo exact origin and set Vary header)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (isOriginAllowed(origin)) {
-    // If origin exists, echo it back (required when credentials true)
-    if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
-    else res.setHeader('Access-Control-Allow-Origin', '*'); // for non-browser clients
 
-    // Allow credentials if you actually use cookies/sessions from browser
-    // If you don't use cookies, you can set this to false or remove the header.
+  if (isOriginAllowed(origin)) {
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin); // echo exact origin (required if credentials true)
+      res.setHeader('Vary', 'Origin'); // ensure caches respect origin-specific responses
+    } else {
+      // non-browser clients (curl, server-to-server)
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+
+    // If you don't use cookies/sessions, you can remove this header.
     res.setHeader('Access-Control-Allow-Credentials', 'true');
 
-    // Methods + headers
+    // Allowed methods & headers
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
-    // Expose streaming / range headers to browser so it can handle video streaming
+    // Expose streaming & range headers so browsers can use <video> range requests properly
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length, Content-Type');
   } else {
-    // Not allowed origin -> no CORS headers (browser will block)
+    // No CORS headers set -> browser will block cross-origin request
     console.warn('Blocked CORS origin:', origin);
   }
 
-  // handle preflight
   if (req.method === 'OPTIONS') {
+    // Preflight short-circuit
     return res.sendStatus(204);
   }
   next();
 });
 // ------------------- end CORS configuration -------------------
 
-
-
 app.use(express.json());
 
-// Rate limiting (apply after CORS!)
+// Rate limiting (apply after CORS)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 40,
@@ -280,13 +280,14 @@ app.get('/api/stream', async (req, res) => {
   let extraHeaders = {};
   if (h) {
     try {
-      extraHeaders = JSON.parse(Buffer.from(h, 'base64').toString('utf8'));
+      extraHeaders = JSON.parse(Buffer.from(decodeURIComponent(h), 'base64').toString('utf8'));
     } catch (e) {
       console.warn('Invalid headers param', e);
     }
   }
 
   try {
+    // Will throw if invalid URL
     const parsed = new URL(remoteUrl);
 
     const forward = {};
@@ -295,8 +296,10 @@ app.get('/api/stream', async (req, res) => {
 
     const upstream = await fetch(remoteUrl, {
       headers: forward,
+      // follow redirects (default)
     });
 
+    // Forward upstream status and selected headers
     res.status(upstream.status);
 
     upstream.headers.forEach((value, name) => {
@@ -315,6 +318,7 @@ app.get('/api/stream', async (req, res) => {
       }
     });
 
+    // Pipe stream to client (supports range requests)
     await streamPipeline(upstream.body, res);
   } catch (err) {
     console.error('Stream proxy error', err);
@@ -350,7 +354,7 @@ app.get('/api/check-dependencies', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
 
 module.exports = app;
